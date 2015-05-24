@@ -1,0 +1,133 @@
+---
+title: "Machine Learning assignment"
+author: "Hadrien"
+date: "05/22/2015"
+output: html_document
+---
+
+# Abstract
+
+A classification tree was built on the pml-training data in order to predict the classe variable. An estimated out-of-sample error of 6% was achieved.
+
+## Cleaning the dataset
+
+First of all, some data cleaning:
+Searching for Na values show that a lot of variables contain more than 90 % of NA, making them very difficult to exploit.
+Out of the 160 original variables, 67 of them were removed due to the high proportion of NA.
+
+The first 7 variables were also removed ("rowname","user_name" etc.) as they do not provide any relevant information for classe predicting.
+
+6 factor variables were also removed because perfectly correlated to other variables, as we can see in the following correlation matrix:
+```{r, echo=FALSE}
+
+### submission function
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+
+
+#### Assignement
+setwd("~/R/R directory/machine learning assignement//")
+training<-read.csv("pml-training.csv",header = TRUE)
+T<-training[,1:7]
+train<-training[,-(1:7)]
+
+##Removing variables with too many NA
+Matrix_Na<-is.na(train)
+Vect_Na<-(apply(Matrix_Na,2,sum))/length(training$X)
+rm(Matrix_Na)
+bad_var<-(Vect_Na>0.9)
+bad_var<-grep("TRUE",bad_var)
+train<-train[,-bad_var]
+
+## Analysing 2 factors variables to see if they are relevant
+facttwo<-c(7,10,13,75,72,69,53,50,47)
+test<-train[,c(facttwo,86)]
+for (i in 1:length(facttwo)){
+        test[,i]<-as.numeric(test[,i])
+}
+cor(test[,-(length(facttwo)+1)])
+train<-train[,-c(7,10,72,69,50,47)]
+
+for (i in 1:79){
+        train[,i]<-as.numeric(train[,i])
+}
+```
+
+Out of the 160 original variables, only 80 were used in the model building.
+
+## Building the predictive model
+
+As the outcome is categorical, a decision tree was built using Rpart. 
+
+```{r, echo=FALSE}
+library(rpart)
+set.seed(12345)
+tree1<-rpart(classe~.,data=train,control = rpart.control(cp = 0.0000001))
+```
+
+As we are not interested in the tree itself but only on the prediction accuracy, the final tree comprises a lot of nodes and leafs. Therefore, we cannot represent the tree in a readable and straightforward graphical device.
+
+Having a lot of observations, the complexity parameter was set to 10^-7. Here is the plot of CP table:
+```{r, echo=FALSE}
+plotcp(tree1)
+```
+
+Let's zoom in to the interesting area:
+
+
+```{r, echo=FALSE}
+library(ggplot2)
+cptable<-as.data.frame(tree1$cptable)
+cptable_p<-cptable[cptable$CP<0.0005,]
+cptable_p$labels<-as.character(cptable_p$nsplit)
+a<-which.min(cptable_p$xerror)
+x_se<-cptable_p$xerror[a]+cptable_p$xstd[a]
+g<-ggplot(data=cptable_p,aes(x=CP,y=xerror)) +
+        geom_errorbar(aes(ymin=xerror - xstd, ymax=xerror+xstd)) +
+        scale_x_reverse()+ labs(x="Complexity parameter",y="cross validation error") +
+        geom_point(pch=21)+ geom_line() + geom_text(aes(x=CP,y=xerror+0.005,label=labels),cex=3)+
+        geom_hline(yintercept=x_se,linetype="dotted") +
+        theme(strip.background = element_rect(fill = "black"),
+              panel.grid.major = element_line(colour = "grey90"),
+              panel.grid.minor = element_line(colour = "grey95"),
+              panel.background = element_rect(fill = "transparent"))
+        
+g
+```
+
+### Pruning
+The tree was pruned in order to achieve a minimum cross validation error rate. Therefore, the first CP value with lowest cross validation error was used to prune the tree. 
+An alternative would have been to use the first CP value whose cross validation error is in the range of the lowest cross validation error +- the standard error but too much accuracy was lost using this CP.
+```{r, echo=FALSE}
+cp.choice2<-tree1$cptable[79,1]
+pruned.tree2<-prune(tree1, cp=cp.choice2)
+```
+
+## Cross validation and out-of-sample error
+
+###Confusion matrix and resubstitution error
+```{r, echo=FALSE}
+confus.matrix<-table(train$classe,predict(pruned.tree2,newdata=train,type="class"))
+confus.matrix
+```
+The model have an in-sample accuracy of 95.8 %, and a resubstitution error rate of 4.2 %
+
+### Out-of-sample error
+
+For a better prediction of accuracy, it is robust to use the error rate computed using a 10-fold cross validation (directly done in rpart) :
+```{r, echo=FALSE}
+tree1$cptable[79,]
+```
+
+Here is the estimate of the out-of-sample error (with the chosen CP):
+```{r}
+Out_of_sample_error<-0.08424726*0.71563*100
+Out_of_sample_error
+```
+
+The estimated out-of-sample accuracy is therefore: 93.97%
